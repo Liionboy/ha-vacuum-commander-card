@@ -3,17 +3,20 @@ import { customElement, property, state } from 'lit/decorators.js';
 import { HomeAssistant, fireEvent } from 'custom-card-helpers';
 
 const CARD = 'ha-vacuum-commander-card';
-console.info(`%c 🤖 VACUUM-COMMANDER %c v1.0.0 `,'color:#fff;background:#10b981;font-weight:700;border-radius:4px 0 0 4px;padding:2px 6px;','color:#fff;background:#6b7280;font-weight:700;border-radius:0 4px 4px 0;padding:2px 6px;');
+console.info(`%c 🤖 VACUUM-COMMANDER %c v1.1.0 `,'color:#fff;background:#10b981;font-weight:700;border-radius:4px 0 0 4px;padding:2px 6px;','color:#fff;background:#6b7280;font-weight:700;border-radius:0 4px 4px 0;padding:2px 6px;');
 
-interface VacuumConfig { type: string; title?: string; entity?: string; rooms?: Array<{ id: string; name: string; icon?: string }>; show_map?: boolean; show_history?: boolean; }
+interface Room { id: string; name: string; icon?: string; segments?: number[] | string; }
+interface VacuumConfig { type: string; title?: string; entity?: string; rooms?: Room[]; }
 
+// `segments` = ID-urile numerice reale ale segmentelor din harta vacuumului
+// (din aplicația Xiaomi/Dreame). Dacă lipsește, se trimite `id` ca fallback.
 const DEFAULT_ROOMS = [
-  { id: 'living', name: 'Living', icon: 'mdi:sofa' },
-  { id: 'bucatarie', name: 'Bucătărie', icon: 'mdi:silverware' },
-  { id: 'dormitor', name: 'Dormitor', icon: 'mdi:bed' },
-  { id: 'baie', name: 'Baie', icon: 'mdi:shower' },
-  { id: 'birou', name: 'Birou', icon: 'mdi:desk' },
-  { id: 'hol', name: 'Hol', icon: 'mdi:door' },
+  { id: 'living', name: 'Living', icon: 'mdi:sofa', segments: [1] },
+  { id: 'bucatarie', name: 'Bucătărie', icon: 'mdi:silverware', segments: [2] },
+  { id: 'dormitor', name: 'Dormitor', icon: 'mdi:bed', segments: [3] },
+  { id: 'baie', name: 'Baie', icon: 'mdi:shower', segments: [4] },
+  { id: 'birou', name: 'Birou', icon: 'mdi:desk', segments: [5] },
+  { id: 'hol', name: 'Hol', icon: 'mdi:door', segments: [6] },
 ];
 
 @customElement(CARD)
@@ -22,15 +25,15 @@ export class VacuumCommanderCard extends LitElement {
   @property({ attribute: false }) public config!: VacuumConfig;
 
   public static getStubConfig(): VacuumConfig {
-    return { type: CARD, title: '🤖 Noci', entity: 'vacuum.noci', rooms: DEFAULT_ROOMS, show_map: true, show_history: true };
+    return { type: CARD, title: '🤖 Vacuum', entity: 'vacuum.my_vacuum', rooms: DEFAULT_ROOMS };
   }
 
   setConfig(config: VacuumConfig): void {
     if (!config) throw new Error('Invalid config');
-    this.config = { type: CARD, title: '🤖 Noci', entity: 'vacuum.noci', rooms: DEFAULT_ROOMS, show_map: true, show_history: true, ...config };
+    this.config = { type: CARD, title: '🤖 Vacuum', entity: 'vacuum.my_vacuum', rooms: DEFAULT_ROOMS, ...config };
   }
 
-  private _getEntity() { return this.hass?.states[this.config.entity || 'vacuum.noci']; }
+  private _getEntity() { return this.hass?.states[this.config.entity || 'vacuum.my_vacuum']; }
   private _getState() { return this._getEntity()?.state || 'unknown'; }
   private _getAttr(attr: string) { return (this._getEntity()?.attributes as Record<string, unknown>)?.[attr]; }
   private _getBattery() { return this._getAttr('battery_level') as number || 0; }
@@ -38,11 +41,15 @@ export class VacuumCommanderCard extends LitElement {
   private _getFriendlyName() { return (this._getEntity()?.attributes as Record<string, unknown>)?.friendly_name as string || 'Vacuum'; }
 
   private _callService(service: string, data?: Record<string, unknown>) {
-    this.hass.callService('vacuum', service, { entity_id: this.config.entity || 'vacuum.noci', ...data });
+    this.hass.callService('vacuum', service, { entity_id: this.config.entity || 'vacuum.my_vacuum', ...data });
   }
 
-  private _cleanRoom(roomId: string) {
-    this._callService('send_command', { command: 'app_segment_clean', params: { segment_ids: [roomId] } });
+  private _cleanRoom(room: Room) {
+    const segments = room.segments ?? room.id;
+    const segmentIds = Array.isArray(segments)
+      ? segments
+      : segments.split(',').map((s) => s.trim()).filter(Boolean);
+    this._callService('send_command', { command: 'app_segment_clean', params: { segment_ids: segmentIds } });
   }
 
   private _stateLabel(state: string): string {
@@ -99,7 +106,7 @@ export class VacuumCommanderCard extends LitElement {
             <div class="rooms-title">Camere</div>
             <div class="rooms">
               ${(this.config.rooms || []).map(room => html`
-                <button class="room-btn" @click=${() => this._cleanRoom(room.id)}>
+                <button class="room-btn" @click=${() => this._cleanRoom(room)}>
                   <ha-icon .icon=${room.icon || 'mdi:room'}></ha-icon>
                   <span>${room.name}</span>
                 </button>

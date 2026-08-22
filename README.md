@@ -66,29 +66,38 @@ type: custom:ha-vacuum-commander-card
 
 ```yaml
 type: custom:ha-vacuum-commander-card
-title: 🤖 Noci
-entity: vacuum.noci
-show_map: true
-show_history: true
+title: 🤖 Vacuum
+entity: vacuum.my_vacuum
 rooms:
   - id: living
     name: Living
     icon: mdi:sofa
+    segments: [1]
   - id: bucatarie
     name: Bucătărie
     icon: mdi:silverware
+    segments: [2]
   - id: dormitor
     name: Dormitor
     icon: mdi:bed
+    segments: [3]
   - id: baie
     name: Baie
     icon: mdi:shower
+    segments: [4]
   - id: birou
     name: Birou
     icon: mdi:desk
+    segments: [5]
   - id: hol
     name: Hol
     icon: mdi:door
+    segments: [6]
+```
+
+### Room segments
+
+`segments` sunt **ID-urile numerice reale** ale segmentelor din harta vacuumului (le găsești în aplicația Xiaomi/Dreame), nu numele camerelor. Comanda `app_segment_clean` așteaptă aceste ID-uri numerice. Dacă `segments` lipsește, se trimite `id` ca fallback.
 ```
 
 ## 📄 License
