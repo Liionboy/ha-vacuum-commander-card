@@ -12,6 +12,7 @@ A responsive Home Assistant Lovelace card for controlling a vacuum, starting roo
 - Spot cleaning and fan-speed display
 - Home Assistant theme colors and compact layouts that adapt to the card's width, including `horizontal-stack`
 - Press and hold the card background to open Home Assistant More Info
+- Four configurable color palettes: `aurora`, `ocean`, `sunset`, and `lavender`
 - HACS compatible
 
 ## Installation with HACS
@@ -25,6 +26,7 @@ A responsive Home Assistant Lovelace card for controlling a vacuum, starting roo
 type: custom:ha-vacuum-commander-card
 title: Vacuum
 entity: vacuum.my_vacuum
+palette: aurora
 ```
 
 For a Dreame vacuum, omit `rooms` to discover rooms from the active map. Optionally set `map_entity` or `battery_entity` when the automatically derived entity IDs do not match your setup.
@@ -38,6 +40,7 @@ For a Dreame vacuum, omit `rooms` to discover rooms from the active map. Optiona
 | `rooms` | No | Explicit room list. When omitted, Dreame rooms are discovered from its active map. |
 | `map_entity` | No | Map camera entity; defaults to `camera.<vacuum object id>_map` |
 | `battery_entity` | No | Battery sensor; defaults to `sensor.<vacuum object id>_battery_level` |
+| `palette` | No | Accent palette: `aurora` (default), `ocean`, `sunset`, or `lavender` |
 
 Example with an explicit room list:
 

@@ -3,10 +3,11 @@ import { customElement, property } from 'lit/decorators.js';
 import { HomeAssistant, fireEvent } from 'custom-card-helpers';
 
 const CARD = 'ha-vacuum-commander-card';
-console.info(`%c 🤖 VACUUM-COMMANDER %c v1.2.0 `,'color:#fff;background:#10b981;font-weight:700;border-radius:4px 0 0 4px;padding:2px 6px;','color:#fff;background:#6b7280;font-weight:700;border-radius:0 4px 4px 0;padding:2px 6px;');
+console.info(`%c 🤖 VACUUM-COMMANDER %c v1.3.0 `,'color:#fff;background:#10b981;font-weight:700;border-radius:4px 0 0 4px;padding:2px 6px;','color:#fff;background:#6b7280;font-weight:700;border-radius:0 4px 4px 0;padding:2px 6px;');
 
 interface Room { id: string | number; name: string; icon?: string; segments?: number[] | string; }
-interface VacuumConfig { type: string; title?: string; entity?: string; rooms?: Room[]; map_entity?: string; battery_entity?: string; }
+type Palette = 'aurora' | 'ocean' | 'sunset' | 'lavender';
+interface VacuumConfig { type: string; title?: string; entity?: string; rooms?: Room[]; map_entity?: string; battery_entity?: string; palette?: Palette; }
 
 @customElement(CARD)
 export class VacuumCommanderCard extends LitElement {
@@ -17,12 +18,13 @@ export class VacuumCommanderCard extends LitElement {
   private _longPressTriggered = false;
 
   public static getStubConfig(): VacuumConfig {
-    return { type: CARD, title: '🤖 Vacuum', entity: 'vacuum.my_vacuum' };
+    return { type: CARD, title: '🤖 Vacuum', entity: 'vacuum.my_vacuum', palette: 'aurora' };
   }
 
   setConfig(config: VacuumConfig): void {
     if (!config) throw new Error('Invalid config');
-    this.config = { ...config, type: CARD, title: config.title || '🤖 Vacuum', entity: config.entity || 'vacuum.my_vacuum' };
+    const palette = ['aurora', 'ocean', 'sunset', 'lavender'].includes(config.palette || '') ? config.palette : 'aurora';
+    this.config = { ...config, type: CARD, title: config.title || '🤖 Vacuum', entity: config.entity || 'vacuum.my_vacuum', palette };
   }
 
   private _getEntity() { return this.hass?.states[this.config.entity || 'vacuum.my_vacuum']; }
@@ -139,7 +141,7 @@ export class VacuumCommanderCard extends LitElement {
     const mapUnavailable = this._isDreameVacuum() && this._getMapIndex() === undefined;
 
     return html`
-      <ha-card @pointerdown=${(event: PointerEvent) => this._onPointerDown(event)} @pointermove=${(event: PointerEvent) => this._onPointerMove(event)} @pointerup=${this._onPointerEnd} @pointercancel=${this._onPointerEnd} @pointerleave=${this._onPointerEnd} @contextmenu=${(event: Event) => this._onContextMenu(event)}>
+      <ha-card data-palette=${this.config.palette || 'aurora'} @pointerdown=${(event: PointerEvent) => this._onPointerDown(event)} @pointermove=${(event: PointerEvent) => this._onPointerMove(event)} @pointerup=${this._onPointerEnd} @pointercancel=${this._onPointerEnd} @pointerleave=${this._onPointerEnd} @contextmenu=${(event: Event) => this._onContextMenu(event)}>
         <div class="shell">
           <div class="header">
             <div class="identity">
@@ -199,15 +201,20 @@ export class VacuumCommanderCard extends LitElement {
     return css`
       :host { display:block; min-width:0; max-width:100%; }
       ha-card { box-sizing:border-box; width:100%; min-width:0; max-width:100%; container-type:inline-size; container-name:vacuum-card; overflow:hidden; border:1px solid color-mix(in srgb,var(--divider-color) 58%,transparent); border-radius:24px; background:var(--ha-card-background,var(--card-background-color,#fff)); box-shadow:var(--ha-card-box-shadow,0 12px 34px rgba(20,35,55,.1)); touch-action:pan-y; }
-      .shell { --glow:var(--primary-color); padding:clamp(16px,3cqi,22px); background:radial-gradient(ellipse at 8% 0%,color-mix(in srgb,var(--glow) 11%,transparent),transparent 48%); }
+      ha-card[data-palette="aurora"] { --vac-a:#078f72; --vac-b:#27b7b0; --vac-c:#54a9db; }
+      ha-card[data-palette="ocean"] { --vac-a:#1477c9; --vac-b:#22a7c7; --vac-c:#6b68d8; }
+      ha-card[data-palette="sunset"] { --vac-a:#df5d42; --vac-b:#ee973f; --vac-c:#cf5d9e; }
+      ha-card[data-palette="lavender"] { --vac-a:#8059c7; --vac-b:#b56cc8; --vac-c:#4c9bc7; }
+      .shell { --glow:var(--vac-a); position:relative; padding:clamp(16px,3cqi,22px); background:radial-gradient(ellipse at 0% 0%,color-mix(in srgb,var(--vac-a) 13%,transparent),transparent 54%),radial-gradient(ellipse at 100% 100%,color-mix(in srgb,var(--vac-b) 9%,transparent),transparent 48%); }
+      .shell::before { position:absolute; top:0; right:22px; left:22px; height:3px; border-radius:0 0 4px 4px; background:linear-gradient(90deg,var(--vac-a),var(--vac-b),var(--vac-c)); content:""; }
       .header { display:flex; justify-content:space-between; align-items:center; gap:12px; min-width:0; }
       .identity { display:flex; align-items:center; gap:12px; min-width:0; }
-      .icon-wrap { display:grid; place-items:center; flex:0 0 48px; width:48px; height:48px; border-radius:17px; color:var(--primary-color); background:color-mix(in srgb,var(--primary-color) 12%,var(--card-background-color)); }
+      .icon-wrap { display:grid; place-items:center; flex:0 0 48px; width:48px; height:48px; border:1px solid color-mix(in srgb,var(--vac-a) 25%,transparent); border-radius:17px; color:#fff; background:linear-gradient(145deg,var(--vac-a),var(--vac-b)); box-shadow:0 7px 18px color-mix(in srgb,var(--vac-a) 24%,transparent); }
       .icon-wrap ha-icon { --mdc-icon-size:25px; }
       .icon-wrap.state-cleaning { color:var(--success-color,#168b68); background:color-mix(in srgb,var(--success-color,#168b68) 14%,var(--card-background-color)); }
       .icon-wrap.state-error { color:var(--error-color,#d34444); background:color-mix(in srgb,var(--error-color,#d34444) 13%,var(--card-background-color)); }
       .header-text { min-width:0; }
-      .eyebrow { color:var(--secondary-text-color); font-size:9px; font-weight:800; letter-spacing:.13em; text-transform:uppercase; }
+      .eyebrow { color:var(--vac-a); font-size:9px; font-weight:800; letter-spacing:.13em; text-transform:uppercase; }
       .header-title { overflow:hidden; color:var(--primary-text-color); font-size:19px; font-weight:750; line-height:1.2; text-overflow:ellipsis; white-space:nowrap; }
       .header-meta { display:flex; align-items:center; gap:7px; flex:0 0 auto; }
       .pill { display:flex; align-items:center; gap:7px; padding:8px 11px; border-radius:999px; color:var(--secondary-text-color); background:var(--secondary-background-color); font-size:11px; font-weight:750; white-space:nowrap; }
@@ -223,7 +230,7 @@ export class VacuumCommanderCard extends LitElement {
       .controls { display:flex; justify-content:center; gap:8px; margin-bottom:17px; }
       .ctrl-btn,.room-btn,.quick-btn { min-width:0; border:1px solid color-mix(in srgb,var(--divider-color) 60%,transparent); background:color-mix(in srgb,var(--secondary-background-color) 62%,transparent); color:var(--primary-text-color); font:inherit; cursor:pointer; transition:background .18s,border-color .18s,transform .18s; }
       .ctrl-btn { display:flex; flex:1 1 0; flex-direction:column; align-items:center; justify-content:center; gap:5px; min-height:62px; max-width:140px; padding:9px 10px; border-radius:16px; }
-      .ctrl-btn:hover,.room-btn:hover,.quick-btn:hover { border-color:color-mix(in srgb,var(--primary-color) 36%,var(--divider-color)); background:color-mix(in srgb,var(--primary-color) 9%,var(--secondary-background-color)); }
+      .ctrl-btn:hover,.room-btn:hover,.quick-btn:hover { border-color:color-mix(in srgb,var(--vac-a) 36%,var(--divider-color)); background:color-mix(in srgb,var(--vac-a) 9%,var(--secondary-background-color)); }
       .ctrl-btn:active,.room-btn:active,.quick-btn:active { transform:scale(.98); }
       .ctrl-btn ha-icon { --mdc-icon-size:21px; }
       .ctrl-btn span { font-size:11px; font-weight:700; }
@@ -232,13 +239,20 @@ export class VacuumCommanderCard extends LitElement {
       .rooms-title { margin-bottom:9px; color:var(--primary-text-color); font-size:13px; font-weight:750; }
       .rooms { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; margin-bottom:13px; }
       .room-btn { display:flex; align-items:center; justify-content:flex-start; gap:8px; min-height:46px; padding:8px 10px; border-radius:14px; text-align:left; }
-      .room-btn ha-icon { flex:0 0 auto; --mdc-icon-size:19px; color:var(--primary-color); }
+      .room-btn ha-icon { flex:0 0 auto; --mdc-icon-size:19px; color:var(--vac-a); }
+      .room-btn:nth-child(3n + 2) ha-icon { color:var(--vac-b); }
+      .room-btn:nth-child(3n) ha-icon { color:var(--vac-c); }
+      .room-btn:nth-child(3n + 1) { background:linear-gradient(135deg,color-mix(in srgb,var(--vac-a) 8%,var(--card-background-color,#fff)),var(--card-background-color,#fff)); }
+      .room-btn:nth-child(3n + 2) { background:linear-gradient(135deg,color-mix(in srgb,var(--vac-b) 9%,var(--card-background-color,#fff)),var(--card-background-color,#fff)); }
+      .room-btn:nth-child(3n) { background:linear-gradient(135deg,color-mix(in srgb,var(--vac-c) 9%,var(--card-background-color,#fff)),var(--card-background-color,#fff)); }
+      .room-btn:hover { background:color-mix(in srgb,var(--vac-a) 13%,var(--card-background-color,#fff)); }
       .room-btn span { overflow:hidden; font-size:11px; font-weight:650; text-overflow:ellipsis; white-space:nowrap; }
       .room-btn:disabled { opacity:.45; cursor:not-allowed; }
       .map-warning { margin:0 0 12px; color:var(--error-color,#d34444); font-size:11px; }
       .quick-clean { display:flex; justify-content:center; }
       .quick-btn { display:inline-flex; align-items:center; justify-content:center; gap:7px; min-height:40px; padding:0 15px; border-radius:13px; font-size:12px; font-weight:700; }
-      .quick-btn ha-icon { --mdc-icon-size:17px; color:var(--primary-color); }
+      .quick-btn { border-color:color-mix(in srgb,var(--vac-a) 24%,var(--divider-color)); background:linear-gradient(110deg,color-mix(in srgb,var(--vac-a) 10%,var(--card-background-color,#fff)),color-mix(in srgb,var(--vac-b) 12%,var(--card-background-color,#fff))); }
+      .quick-btn ha-icon { --mdc-icon-size:17px; color:var(--vac-a); }
       @container vacuum-card (max-width:480px) { .shell{padding:15px}.header{gap:8px}.identity{gap:9px}.icon-wrap{flex-basis:40px;width:40px;height:40px;border-radius:14px}.icon-wrap ha-icon{--mdc-icon-size:22px}.header-title{font-size:17px}.pill{gap:5px;padding:7px 9px;font-size:10px}.battery{padding:6px 8px}.subline{margin-left:49px}.content{margin-top:14px}.controls{gap:6px;margin-bottom:13px}.ctrl-btn{min-height:53px;padding:7px 6px;border-radius:14px}.rooms{grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}.room-btn{min-height:42px;padding:7px 9px} }
       @container vacuum-card (max-width:360px) { .shell{padding:12px}.header-meta{gap:4px}.pill{gap:4px;padding:6px 7px;font-size:9px}.battery{gap:2px;padding:5px 6px;font-size:10px}.header-title{font-size:16px}.subline{margin-left:45px;font-size:10px}.rooms{gap:6px}.room-btn{gap:6px;padding:6px 7px}.room-btn span{font-size:10px} }
       @media (prefers-reduced-motion:reduce) { *,*::before,*::after { transition:none !important; } }
