@@ -1,44 +1,97 @@
 import { LitElement, html, css, CSSResultGroup, TemplateResult, nothing } from 'lit';
-import { customElement, property, state } from 'lit/decorators.js';
+import { customElement, property } from 'lit/decorators.js';
 import { HomeAssistant, fireEvent } from 'custom-card-helpers';
 
 const CARD = 'ha-vacuum-commander-card';
-console.info(`%c 🤖 VACUUM-COMMANDER %c v1.1.0 `,'color:#fff;background:#10b981;font-weight:700;border-radius:4px 0 0 4px;padding:2px 6px;','color:#fff;background:#6b7280;font-weight:700;border-radius:0 4px 4px 0;padding:2px 6px;');
+console.info(`%c 🤖 VACUUM-COMMANDER %c v1.2.0 `,'color:#fff;background:#10b981;font-weight:700;border-radius:4px 0 0 4px;padding:2px 6px;','color:#fff;background:#6b7280;font-weight:700;border-radius:0 4px 4px 0;padding:2px 6px;');
 
-interface Room { id: string; name: string; icon?: string; segments?: number[] | string; }
-interface VacuumConfig { type: string; title?: string; entity?: string; rooms?: Room[]; }
-
-// `segments` = ID-urile numerice reale ale segmentelor din harta vacuumului
-// (din aplicația Xiaomi/Dreame). Dacă lipsește, se trimite `id` ca fallback.
-const DEFAULT_ROOMS = [
-  { id: 'living', name: 'Living', icon: 'mdi:sofa', segments: [1] },
-  { id: 'bucatarie', name: 'Bucătărie', icon: 'mdi:silverware', segments: [2] },
-  { id: 'dormitor', name: 'Dormitor', icon: 'mdi:bed', segments: [3] },
-  { id: 'baie', name: 'Baie', icon: 'mdi:shower', segments: [4] },
-  { id: 'birou', name: 'Birou', icon: 'mdi:desk', segments: [5] },
-  { id: 'hol', name: 'Hol', icon: 'mdi:door', segments: [6] },
-];
+interface Room { id: string | number; name: string; icon?: string; segments?: number[] | string; }
+interface VacuumConfig { type: string; title?: string; entity?: string; rooms?: Room[]; map_entity?: string; battery_entity?: string; }
 
 @customElement(CARD)
 export class VacuumCommanderCard extends LitElement {
   @property({ attribute: false }) public hass!: HomeAssistant;
   @property({ attribute: false }) public config!: VacuumConfig;
+  private _holdTimer?: ReturnType<typeof setTimeout>;
+  private _holdStart?: { x: number; y: number };
+  private _longPressTriggered = false;
 
   public static getStubConfig(): VacuumConfig {
-    return { type: CARD, title: '🤖 Vacuum', entity: 'vacuum.my_vacuum', rooms: DEFAULT_ROOMS };
+    return { type: CARD, title: '🤖 Vacuum', entity: 'vacuum.my_vacuum' };
   }
 
   setConfig(config: VacuumConfig): void {
     if (!config) throw new Error('Invalid config');
-    this.config = { type: CARD, title: '🤖 Vacuum', entity: 'vacuum.my_vacuum', rooms: DEFAULT_ROOMS, ...config };
+    this.config = { ...config, type: CARD, title: config.title || '🤖 Vacuum', entity: config.entity || 'vacuum.my_vacuum' };
   }
 
   private _getEntity() { return this.hass?.states[this.config.entity || 'vacuum.my_vacuum']; }
   private _getState() { return this._getEntity()?.state || 'unknown'; }
   private _getAttr(attr: string) { return (this._getEntity()?.attributes as Record<string, unknown>)?.[attr]; }
-  private _getBattery() { return this._getAttr('battery_level') as number || 0; }
+  private _getBattery(): number | undefined {
+    const entityId = this.config.battery_entity || `sensor.${(this.config.entity || 'vacuum.my_vacuum').split('.')[1]}_battery_level`;
+    const sensorState = this.hass?.states[entityId]?.state;
+    const value = this._getAttr('battery_level') ?? (sensorState && !['unknown', 'unavailable'].includes(sensorState) ? sensorState : undefined);
+    const battery = Number(value);
+    return Number.isFinite(battery) && battery >= 0 && battery <= 100 ? battery : undefined;
+  }
   private _getFanSpeed() { return this._getAttr('fan_speed') as string || 'unknown'; }
   private _getFriendlyName() { return (this._getEntity()?.attributes as Record<string, unknown>)?.friendly_name as string || 'Vacuum'; }
+
+  private _getRooms(): Room[] {
+    if (this.config.rooms !== undefined) return this.config.rooms;
+    const roomMaps = this._getAttr('rooms') as Record<string, Array<Record<string, unknown>>> | undefined;
+    if (!roomMaps || typeof roomMaps !== 'object') return [];
+    const selectedMap = String(this._getAttr('selected_map') || '');
+    const rooms = roomMaps[selectedMap] || Object.values(roomMaps)[0] || [];
+    return rooms.filter((room) => room && room.id !== undefined && room.name)
+      .map((room) => ({ id: room.id as string | number, name: this._roomLabel(String(room.name)), icon: String(room.icon || 'mdi:door') }));
+  }
+
+  private _roomLabel(name: string): string {
+    const labels: Record<string, string> = {
+      'office': 'Birou', 'living room': 'Living', 'hallway': 'Hol',
+      'bathroom': 'Baie', 'kitchen': 'Bucătărie',
+      'secondary bedroom': 'Dormitor secundar', 'master bedroom': 'Dormitor matrimonial',
+      'room 4': 'Cameră 4 · verifică',
+    };
+    return labels[name.trim().toLowerCase()] || name;
+  }
+
+  private _onPointerDown(event: PointerEvent): void {
+    if (event.button !== 0 || event.composedPath().some((node) => node instanceof HTMLElement && node.matches('button, a, input, select, textarea, ha-slider'))) return;
+    this._holdStart = { x: event.clientX, y: event.clientY };
+    this._holdTimer = setTimeout(() => {
+      this._longPressTriggered = true;
+      fireEvent(this, 'hass-more-info', { entityId: this.config.entity || 'vacuum.my_vacuum' });
+    }, 600);
+  }
+
+  private _onPointerMove(event: PointerEvent): void {
+    if (this._holdStart && Math.hypot(event.clientX - this._holdStart.x, event.clientY - this._holdStart.y) > 10) this._onPointerEnd();
+  }
+
+  private _onPointerEnd(): void {
+    if (this._holdTimer) clearTimeout(this._holdTimer);
+    this._holdTimer = undefined;
+    this._holdStart = undefined;
+  }
+
+  private _onContextMenu(event: Event): void {
+    if (!this._longPressTriggered) return;
+    event.preventDefault();
+    this._longPressTriggered = false;
+  }
+
+  private _isDreameVacuum(): boolean {
+    return Boolean(this._getAttr('rooms') && this._getAttr('selected_map'));
+  }
+
+  private _getMapIndex(): number | undefined {
+    const entityId = this.config.map_entity || `camera.${(this.config.entity || 'vacuum.my_vacuum').split('.')[1]}_map`;
+    const index = Number(this.hass?.states[entityId]?.attributes?.map_index);
+    return Number.isInteger(index) && index >= 0 ? index : undefined;
+  }
 
   private _callService(service: string, data?: Record<string, unknown>) {
     this.hass.callService('vacuum', service, { entity_id: this.config.entity || 'vacuum.my_vacuum', ...data });
@@ -46,9 +99,20 @@ export class VacuumCommanderCard extends LitElement {
 
   private _cleanRoom(room: Room) {
     const segments = room.segments ?? room.id;
-    const segmentIds = Array.isArray(segments)
+    const segmentIds = (Array.isArray(segments)
       ? segments
-      : segments.split(',').map((s) => s.trim()).filter(Boolean);
+      : String(segments).split(',').map((s) => s.trim()).filter(Boolean)).map(String);
+    if (this._isDreameVacuum()) {
+      const mapIndex = this._getMapIndex();
+      if (mapIndex === undefined) return;
+      const dreameSegments = segmentIds.map((segment) => segment.includes('_') ? segment : `${mapIndex}_${segment}`);
+      this.hass.callService('dreame_vacuum', 'vacuum_clean_segment', {
+        entity_id: this.config.entity || 'vacuum.my_vacuum',
+        segments: dreameSegments,
+      });
+      return;
+    }
+    // Compatibility path for other vacuum integrations that implement the legacy command.
     this._callService('send_command', { command: 'app_segment_clean', params: { segment_ids: segmentIds } });
   }
 
@@ -69,24 +133,29 @@ export class VacuumCommanderCard extends LitElement {
     const state = this._getState();
     const battery = this._getBattery();
     const fanSpeed = this._getFanSpeed();
-    const isCleaning = state === 'cleaning';
+    const rooms = this._getRooms();
+    const hasUnidentifiedRoom = rooms.some((room) => room.name.includes('· verifică'));
+    const batteryAvailable = battery !== undefined;
+    const mapUnavailable = this._isDreameVacuum() && this._getMapIndex() === undefined;
 
     return html`
-      <ha-card>
-        <div class="header state-${state}">
-          <div class="header-icon"><ha-icon .icon=${this._stateIcon(state)}></ha-icon></div>
-          <div class="header-text">
-            <div class="header-title">${this.config.title || this._getFriendlyName()}</div>
-            <div class="header-sub">${this._stateLabel(state)} · ${fanSpeed}</div>
+      <ha-card @pointerdown=${(event: PointerEvent) => this._onPointerDown(event)} @pointermove=${(event: PointerEvent) => this._onPointerMove(event)} @pointerup=${this._onPointerEnd} @pointercancel=${this._onPointerEnd} @pointerleave=${this._onPointerEnd} @contextmenu=${(event: Event) => this._onContextMenu(event)}>
+        <div class="shell">
+          <div class="header">
+            <div class="identity">
+              <div class="icon-wrap state-${state}"><ha-icon .icon=${this._stateIcon(state)}></ha-icon></div>
+              <div class="header-text">
+                <div class="eyebrow">Vacuum Commander</div>
+                <div class="header-title">${this.config.title || this._getFriendlyName()}</div>
+              </div>
+            </div>
+            <div class="header-meta">
+              <div class="pill ${state === 'cleaning' ? 'active' : state === 'error' ? 'error' : ''}"><span class="dot"></span>${this._stateLabel(state)}</div>
+              ${batteryAvailable ? html`<div class="battery ${battery! < 20 ? 'low' : ''}"><ha-icon icon="mdi:battery"></ha-icon><span>${battery}%</span></div>` : nothing}
+            </div>
           </div>
-          <div class="battery ${battery < 20 ? 'low' : ''}">
-            <ha-icon icon="mdi:battery${battery < 20 ? '-alert' : ''}"></ha-icon>
-            <span>${battery}%</span>
-          </div>
-        </div>
-
-        <div class="content">
-          <!-- Controls -->
+          <div class="subline">${fanSpeed}</div>
+          <div class="content">
           <div class="controls">
             ${state === 'cleaning' ? html`
               <button class="ctrl-btn" @click=${() => this._callService('pause')}><ha-icon icon="mdi:pause"></ha-icon><span>Pauză</span></button>
@@ -102,21 +171,24 @@ export class VacuumCommanderCard extends LitElement {
           </div>
 
           <!-- Rooms -->
-          ${(this.config.rooms || []).length > 0 ? html`
+          ${rooms.length > 0 ? html`
             <div class="rooms-title">Camere</div>
             <div class="rooms">
-              ${(this.config.rooms || []).map(room => html`
-                <button class="room-btn" @click=${() => this._cleanRoom(room)}>
+              ${rooms.map(room => html`
+                <button class="room-btn" ?disabled=${mapUnavailable} title=${mapUnavailable ? 'Harta vacuumului nu este disponibilă.' : ''} @click=${() => this._cleanRoom(room)}>
                   <ha-icon .icon=${room.icon || 'mdi:room'}></ha-icon>
                   <span>${room.name}</span>
                 </button>
               `)}
             </div>
+            ${hasUnidentifiedRoom ? html`<div class="map-warning">„Cameră 4 · verifică” are numele implicit din hartă. Identific-o și redenumește-o în aplicația Dreame.</div>` : nothing}
+            ${mapUnavailable ? html`<div class="map-warning">Harta selectată nu este disponibilă; curățarea pe camere este dezactivată.</div>` : nothing}
           ` : nothing}
 
           <!-- Quick clean -->
           <div class="quick-clean">
             <button class="quick-btn" @click=${() => this._callService('clean_spot')}><ha-icon icon="mdi:broom"></ha-icon><span>Curățare rapidă</span></button>
+          </div>
           </div>
         </div>
       </ha-card>
@@ -125,39 +197,51 @@ export class VacuumCommanderCard extends LitElement {
 
   static get styles(): CSSResultGroup {
     return css`
-      :host { display: block; }
-      ha-card { border-radius: 16px; overflow: hidden; }
-      .header { display: flex; align-items: center; gap: 12px; padding: 18px 20px; border-bottom: 1px solid rgba(255,255,255,0.06); }
-      .header.state-cleaning { background: linear-gradient(135deg, rgba(16,185,129,0.08), rgba(34,197,94,0.06)); }
-      .header.state-docked { background: rgba(255,255,255,0.02); }
-      .header.state-error { background: linear-gradient(135deg, rgba(239,68,68,0.08), rgba(245,158,11,0.06)); }
-      .header-icon ha-icon { --mdc-icon-size: 28px; color: var(--primary-text-color); }
-      .header-text { flex: 1; }
-      .header-title { font-size: 16px; font-weight: 600; color: var(--primary-text-color); }
-      .header-sub { font-size: 12px; color: var(--secondary-text-color); }
-      .battery { display: flex; align-items: center; gap: 4px; padding: 4px 10px; border-radius: 10px; background: rgba(34,197,94,0.1); }
-      .battery ha-icon { --mdc-icon-size: 16px; color: #22c55e; }
-      .battery span { font-size: 13px; font-weight: 600; color: #22c55e; }
-      .battery.low { background: rgba(239,68,68,0.1); }
-      .battery.low ha-icon, .battery.low span { color: #ef4444; }
-      .content { padding: 16px; }
-      .controls { display: flex; gap: 8px; margin-bottom: 16px; justify-content: center; }
-      .ctrl-btn { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 12px 18px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.03); color: var(--primary-text-color); cursor: pointer; transition: all 0.2s; }
-      .ctrl-btn:hover { background: rgba(255,255,255,0.08); }
-      .ctrl-btn ha-icon { --mdc-icon-size: 22px; }
-      .ctrl-btn span { font-size: 11px; }
-      .ctrl-btn.start ha-icon { color: #22c55e; }
-      .ctrl-btn.stop ha-icon { color: #ef4444; }
-      .rooms-title { font-size: 13px; font-weight: 600; color: var(--secondary-text-color); margin-bottom: 8px; }
-      .rooms { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 12px; }
-      .room-btn { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 12px 8px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.08); background: rgba(255,255,255,0.02); color: var(--primary-text-color); cursor: pointer; transition: all 0.2s; }
-      .room-btn:hover { background: rgba(16,185,129,0.1); border-color: rgba(16,185,129,0.2); }
-      .room-btn ha-icon { --mdc-icon-size: 20px; }
-      .room-btn span { font-size: 12px; }
-      .quick-clean { text-align: center; }
-      .quick-btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 16px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.03); color: var(--primary-text-color); cursor: pointer; font-size: 13px; }
-      .quick-btn:hover { background: rgba(255,255,255,0.06); }
-      .quick-btn ha-icon { --mdc-icon-size: 16px; }
+      :host { display:block; min-width:0; max-width:100%; }
+      ha-card { box-sizing:border-box; width:100%; min-width:0; max-width:100%; container-type:inline-size; container-name:vacuum-card; overflow:hidden; border:1px solid color-mix(in srgb,var(--divider-color) 58%,transparent); border-radius:24px; background:var(--ha-card-background,var(--card-background-color,#fff)); box-shadow:var(--ha-card-box-shadow,0 12px 34px rgba(20,35,55,.1)); touch-action:pan-y; }
+      .shell { --glow:var(--primary-color); padding:clamp(16px,3cqi,22px); background:radial-gradient(ellipse at 8% 0%,color-mix(in srgb,var(--glow) 11%,transparent),transparent 48%); }
+      .header { display:flex; justify-content:space-between; align-items:center; gap:12px; min-width:0; }
+      .identity { display:flex; align-items:center; gap:12px; min-width:0; }
+      .icon-wrap { display:grid; place-items:center; flex:0 0 48px; width:48px; height:48px; border-radius:17px; color:var(--primary-color); background:color-mix(in srgb,var(--primary-color) 12%,var(--card-background-color)); }
+      .icon-wrap ha-icon { --mdc-icon-size:25px; }
+      .icon-wrap.state-cleaning { color:var(--success-color,#168b68); background:color-mix(in srgb,var(--success-color,#168b68) 14%,var(--card-background-color)); }
+      .icon-wrap.state-error { color:var(--error-color,#d34444); background:color-mix(in srgb,var(--error-color,#d34444) 13%,var(--card-background-color)); }
+      .header-text { min-width:0; }
+      .eyebrow { color:var(--secondary-text-color); font-size:9px; font-weight:800; letter-spacing:.13em; text-transform:uppercase; }
+      .header-title { overflow:hidden; color:var(--primary-text-color); font-size:19px; font-weight:750; line-height:1.2; text-overflow:ellipsis; white-space:nowrap; }
+      .header-meta { display:flex; align-items:center; gap:7px; flex:0 0 auto; }
+      .pill { display:flex; align-items:center; gap:7px; padding:8px 11px; border-radius:999px; color:var(--secondary-text-color); background:var(--secondary-background-color); font-size:11px; font-weight:750; white-space:nowrap; }
+      .pill.active { color:var(--success-color,#218a72); }
+      .pill.error { color:var(--error-color,#d34444); }
+      .dot { width:8px; height:8px; border-radius:50%; background:currentColor; }
+      .pill.active .dot { box-shadow:0 0 0 4px color-mix(in srgb,currentColor 17%,transparent); }
+      .battery { display:flex; align-items:center; gap:4px; padding:7px 9px; border-radius:999px; color:var(--success-color,#218a72); background:color-mix(in srgb,var(--success-color,#218a72) 10%,var(--card-background-color)); font-size:11px; font-weight:750; }
+      .battery ha-icon { --mdc-icon-size:15px; }
+      .battery.low { color:var(--error-color,#d34444); background:color-mix(in srgb,var(--error-color,#d34444) 10%,var(--card-background-color)); }
+      .subline { margin:3px 0 0 60px; color:var(--secondary-text-color); font-size:11px; }
+      .content { margin-top:18px; }
+      .controls { display:flex; justify-content:center; gap:8px; margin-bottom:17px; }
+      .ctrl-btn,.room-btn,.quick-btn { min-width:0; border:1px solid color-mix(in srgb,var(--divider-color) 60%,transparent); background:color-mix(in srgb,var(--secondary-background-color) 62%,transparent); color:var(--primary-text-color); font:inherit; cursor:pointer; transition:background .18s,border-color .18s,transform .18s; }
+      .ctrl-btn { display:flex; flex:1 1 0; flex-direction:column; align-items:center; justify-content:center; gap:5px; min-height:62px; max-width:140px; padding:9px 10px; border-radius:16px; }
+      .ctrl-btn:hover,.room-btn:hover,.quick-btn:hover { border-color:color-mix(in srgb,var(--primary-color) 36%,var(--divider-color)); background:color-mix(in srgb,var(--primary-color) 9%,var(--secondary-background-color)); }
+      .ctrl-btn:active,.room-btn:active,.quick-btn:active { transform:scale(.98); }
+      .ctrl-btn ha-icon { --mdc-icon-size:21px; }
+      .ctrl-btn span { font-size:11px; font-weight:700; }
+      .ctrl-btn.start ha-icon { color:var(--success-color,#218a72); }
+      .ctrl-btn.stop ha-icon { color:var(--error-color,#d34444); }
+      .rooms-title { margin-bottom:9px; color:var(--primary-text-color); font-size:13px; font-weight:750; }
+      .rooms { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; margin-bottom:13px; }
+      .room-btn { display:flex; align-items:center; justify-content:flex-start; gap:8px; min-height:46px; padding:8px 10px; border-radius:14px; text-align:left; }
+      .room-btn ha-icon { flex:0 0 auto; --mdc-icon-size:19px; color:var(--primary-color); }
+      .room-btn span { overflow:hidden; font-size:11px; font-weight:650; text-overflow:ellipsis; white-space:nowrap; }
+      .room-btn:disabled { opacity:.45; cursor:not-allowed; }
+      .map-warning { margin:0 0 12px; color:var(--error-color,#d34444); font-size:11px; }
+      .quick-clean { display:flex; justify-content:center; }
+      .quick-btn { display:inline-flex; align-items:center; justify-content:center; gap:7px; min-height:40px; padding:0 15px; border-radius:13px; font-size:12px; font-weight:700; }
+      .quick-btn ha-icon { --mdc-icon-size:17px; color:var(--primary-color); }
+      @container vacuum-card (max-width:480px) { .shell{padding:15px}.header{gap:8px}.identity{gap:9px}.icon-wrap{flex-basis:40px;width:40px;height:40px;border-radius:14px}.icon-wrap ha-icon{--mdc-icon-size:22px}.header-title{font-size:17px}.pill{gap:5px;padding:7px 9px;font-size:10px}.battery{padding:6px 8px}.subline{margin-left:49px}.content{margin-top:14px}.controls{gap:6px;margin-bottom:13px}.ctrl-btn{min-height:53px;padding:7px 6px;border-radius:14px}.rooms{grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}.room-btn{min-height:42px;padding:7px 9px} }
+      @container vacuum-card (max-width:360px) { .shell{padding:12px}.header-meta{gap:4px}.pill{gap:4px;padding:6px 7px;font-size:9px}.battery{gap:2px;padding:5px 6px;font-size:10px}.header-title{font-size:16px}.subline{margin-left:45px;font-size:10px}.rooms{gap:6px}.room-btn{gap:6px;padding:6px 7px}.room-btn span{font-size:10px} }
+      @media (prefers-reduced-motion:reduce) { *,*::before,*::after { transition:none !important; } }
     `;
   }
 }
